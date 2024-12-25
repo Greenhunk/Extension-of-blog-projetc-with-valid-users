@@ -11,7 +11,7 @@ from sqlalchemy.orm import relationship, DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import Integer, String, Text, ForeignKey
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
-from forms import RegisterForm, LoginForm
+from forms import RegisterForm, LoginForm, CommentForm
 from forms import CreatePostForm
 from typing import List
 
@@ -39,16 +39,14 @@ db.init_app(app)
 class BlogPost(db.Model):
     __tablename__ = "blog_posts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    author_id: Mapped[int] = mapped_column(Integer, db.ForeignKey("user.id"))
+    author = relationship("User", back_populates="posts")
     title: Mapped[str] = mapped_column(String(250), unique=True, nullable=False)
     subtitle: Mapped[str] = mapped_column(String(250), nullable=False)
     date: Mapped[str] = mapped_column(String(250), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    author: Mapped[str] = mapped_column(String(250), nullable=False)
     img_url: Mapped[str] = mapped_column(String(250), nullable=False)
-    author_id: Mapped[int] = mapped_column(Integer, db.ForeignKey("user.id"))
-    parent: Mapped["User"] = relationship(back_populates="children")
-
-
+    comments = relationship("Comment", back_populates="parent_post")
 
 class User(db.Model, UserMixin):
     __tablename__ = "user"
@@ -56,7 +54,18 @@ class User(db.Model, UserMixin):
     email: Mapped[str] = mapped_column(String(250), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(String(250), nullable=False)
     name: Mapped[str] = mapped_column(String(250), nullable=False)
-    children: Mapped[List["BlogPost"]] = relationship(back_populates="parent")
+    posts = relationship("BlogPost", back_populates="author")
+    comments = relationship("Comment", back_populates="comment_author")
+
+class Comment(db.Model):
+    __tablename__ = "comments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    comment_author = relationship("User", back_populates="comments")
+    author_id: Mapped[int] = mapped_column(Integer, db.ForeignKey("user.id"))
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    post_id = mapped_column(Integer, db.ForeignKey("blog_posts.id"))
+    parent_post = relationship("BlogPost", back_populates="comments")
+
 
 with app.app_context():
     db.create_all()
@@ -126,10 +135,19 @@ def get_all_posts():
 
 
 # TODO: Allow logged-in users to comment on posts
-@app.route("/post/<int:post_id>")
+@app.route("/post/<int:post_id>", methods=["GET", "POST"])
 def show_post(post_id):
+
     requested_post = db.get_or_404(BlogPost, post_id)
-    return render_template("post.html", post=requested_post, current_user=current_user)
+    form = CommentForm()
+    if form.validate_on_submit():
+        new_comment = Comment(
+            text = request.form.get("comment"),
+            comment_author = current_user
+        )
+        db.session.add(new_comment)
+        db.session.commit()
+    return render_template("post.html", post=requested_post, current_user=current_user, form = form)
 
 
 # TODO: Use a decorator so only an admin user can create a new post
